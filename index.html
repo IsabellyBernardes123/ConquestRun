@@ -51,10 +51,6 @@
         100% { transform: scale(2.5); opacity: 0; }
       }
     </style>
-    <script>
-      // Evita erro de 'process is not defined' no navegador
-      window.process = window.process || { env: { API_KEY: "" } };
-    </script>
     <script type="importmap">
 {
   "imports": {
@@ -71,9 +67,8 @@
     </script>
   <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-[#0a0f18] text-white overflow-hidden">
+  <body class="bg-[#020617] text-white overflow-hidden">
     <div id="root"></div>
-    <!-- Carrega o ponto de entrada do aplicativo -->
     <script type="module" src="index.tsx"></script>
   <script type="module" src="/index.tsx"></script>
 </body>

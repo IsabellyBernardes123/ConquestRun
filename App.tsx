@@ -28,9 +28,12 @@ const App: React.FC = () => {
   const [missions, setMissions] = useState<Mission[]>([]);
   
   const [mapCenter, setMapCenter] = useState<Coordinate>(() => {
-    const saved = localStorage.getItem('conquest_run_map_center');
-    return saved ? JSON.parse(saved) : MAP_CONFIG.initialCenter;
+    try {
+      const saved = localStorage.getItem('conquest_run_map_center');
+      return saved ? JSON.parse(saved) : MAP_CONFIG.initialCenter;
+    } catch { return MAP_CONFIG.initialCenter; }
   });
+  
   const [mapZoom, setMapZoom] = useState<number>(() => {
     const saved = localStorage.getItem('conquest_run_map_zoom');
     return saved ? parseInt(saved, 10) : MAP_CONFIG.initialZoom;
@@ -48,11 +51,17 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const setup = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await fetchUserProfile(session.user.id);
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (session?.user) {
+          await fetchUserProfile(session.user.id);
+        }
+      } catch (err) {
+        console.error("Erro ao inicializar sessão:", err);
+      } finally {
+        setIsInitializing(false);
       }
-      setIsInitializing(false);
     };
     setup();
 
@@ -73,46 +82,61 @@ const App: React.FC = () => {
   };
 
   const fetchUserProfile = async (userId: string) => {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    if (data) {
-      const user: User = {
-        id: data.id,
-        name: data.username,
-        color: data.color,
-        level: data.level,
-        xp: data.xp,
-        totalDistance: data.total_distance,
-        rankTitle: getRankTitle(data.level)
-      };
-      setCurrentUser(user);
-      
-      const savedMissions = localStorage.getItem(`missions_${userId}`);
-      if (savedMissions) {
-        setMissions(JSON.parse(savedMissions));
-      } else {
-        const newMissions = await generateDailyMissions(user.level);
-        setMissions(newMissions);
-        localStorage.setItem(`missions_${userId}`, JSON.stringify(newMissions));
+    try {
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+      if (error) throw error;
+      if (data) {
+        const user: User = {
+          id: data.id,
+          name: data.username,
+          color: data.color,
+          level: data.level,
+          xp: data.xp,
+          totalDistance: data.total_distance,
+          rankTitle: getRankTitle(data.level)
+        };
+        setCurrentUser(user);
+        
+        const savedMissions = localStorage.getItem(`missions_${userId}`);
+        if (savedMissions) {
+          setMissions(JSON.parse(savedMissions));
+        } else {
+          const newMissions = await generateDailyMissions(user.level);
+          setMissions(newMissions);
+          localStorage.setItem(`missions_${userId}`, JSON.stringify(newMissions));
+        }
       }
+    } catch (err) {
+      console.error("Erro ao carregar perfil:", err);
     }
   };
 
   const handleAuth = async () => {
-    setIsLoading(true);
-    if (isRegistering) {
-      const { error } = await supabase.auth.signUp({
-        email: tempEmail,
-        password: tempPassword,
-        options: { data: { username: tempName, color: tempColor } }
-      });
-      if (error) setLastNotification(error.message);
-      else setLastNotification("Conta criada com sucesso! Verifique seu e-mail.");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: tempEmail, password: tempPassword });
-      if (error) setLastNotification("Erro no login: " + error.message);
+    if (!tempEmail || !tempPassword) {
+      setLastNotification("Preencha todos os campos.");
+      return;
     }
-    setIsLoading(false);
-    setTimeout(() => setLastNotification(null), 4000);
+    
+    setIsLoading(true);
+    try {
+      if (isRegistering) {
+        const { error } = await supabase.auth.signUp({
+          email: tempEmail,
+          password: tempPassword,
+          options: { data: { username: tempName || 'OPERADOR', color: tempColor } }
+        });
+        if (error) throw error;
+        setLastNotification("Alistamento concluído! Verifique seu e-mail.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: tempEmail, password: tempPassword });
+        if (error) throw error;
+      }
+    } catch (error: any) {
+      setLastNotification("Falha: " + error.message);
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setLastNotification(null), 5000);
+    }
   };
 
   const handleLogout = async () => {
@@ -166,7 +190,7 @@ const App: React.FC = () => {
           setMapCenter(newPoint);
           setCurrentPath(prev => [...prev, newPoint]);
         }
-      }, null, { enableHighAccuracy: true });
+      }, (err) => console.error("Erro de GPS:", err), { enableHighAccuracy: true });
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, [isRecording]);
@@ -239,7 +263,6 @@ const App: React.FC = () => {
     setCurrentPath([]);
   };
 
-  // Boot sequence animation while initializing
   if (isInitializing) {
     return (
       <div className="h-screen bg-[#020617] flex flex-col items-center justify-center font-mono">
@@ -336,7 +359,7 @@ const App: React.FC = () => {
             </button>
 
             {lastNotification && (
-              <div className="bg-blue-900/20 border border-blue-500/20 p-3 rounded-xl animate-pulse">
+              <div className="bg-blue-900/20 border border-blue-500/20 p-3 rounded-xl">
                 <p className="text-[9px] text-center font-bold text-blue-300 leading-tight uppercase">{lastNotification}</p>
               </div>
             )}
@@ -418,7 +441,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex flex-col items-center space-y-2">
-              <button onClick={() => setIsSidebarOpen(true)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
+              <button onClick={() => setIsRankingOpen(false)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
                 <Target size={24}/>
               </button>
               <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">Missões</span>
@@ -427,7 +450,7 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Outras modais e rankings (inalterados, mas garantidos) */}
+      {/* Outras modais e rankings */}
       {selectedTerritory && (
         <div className="absolute inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-md px-4 pb-12" onClick={() => setSelectedTerritory(null)}>
           <div className="bg-gray-950 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10 flex flex-col max-h-[85vh]" onClick={e=>e.stopPropagation()}>
