@@ -21,6 +21,35 @@
         background: #1e293b;
         border-radius: 10px;
       }
+
+      /* Animação do Marcador de Localização */
+      .user-location-marker {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .marker-dot {
+        width: 12px;
+        height: 12px;
+        background: #3b82f6;
+        border: 2px solid white;
+        border-radius: 50%;
+        z-index: 2;
+        box-shadow: 0 0 15px #3b82f6;
+      }
+      .marker-pulse {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        background: rgba(59, 130, 246, 0.4);
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+        z-index: 1;
+      }
+      @keyframes pulse {
+        0% { transform: scale(0.5); opacity: 1; }
+        100% { transform: scale(2.5); opacity: 0; }
+      }
     </style>
     <script>
       // Evita erro de 'process is not defined' no navegador
