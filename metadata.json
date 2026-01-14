@@ -1,0 +1,7 @@
+{
+  "name": "ConquestRun",
+  "description": "A gamified running app where runners claim territories by completing closed loops. Defend your zones or conquer new ones by out-running your rivals.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
