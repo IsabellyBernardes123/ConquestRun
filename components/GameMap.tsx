@@ -7,16 +7,19 @@ interface GameMapProps {
   currentPath: Coordinate[];
   territories: Territory[];
   center: Coordinate;
+  zoom?: number;
   onTerritoryClick: (territory: Territory) => void;
   isRecording: boolean;
+  onViewChange?: (center: Coordinate, zoom: number) => void;
 }
 
-const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, onTerritoryClick, isRecording }) => {
+const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, zoom = 16, onTerritoryClick, isRecording, onViewChange }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const pathLayerRef = useRef<L.Polyline | null>(null);
   const territoryLayersRef = useRef<L.LayerGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const isInternalUpdateRef = useRef(false);
 
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -25,7 +28,7 @@ const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, onT
     mapRef.current = L.map(mapContainerRef.current, {
       zoomControl: false,
       attributionControl: false
-    }).setView([center.lat, center.lng], 16);
+    }).setView([center.lat, center.lng], zoom);
 
     // Dark Mode Tiles
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -57,6 +60,18 @@ const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, onT
       zIndexOffset: 1000 
     }).addTo(mapRef.current);
 
+    // Listen for map moves and zooms to persist state
+    const handleMove = () => {
+      if (onViewChange && mapRef.current && !isInternalUpdateRef.current) {
+        const c = mapRef.current.getCenter();
+        const z = mapRef.current.getZoom();
+        onViewChange({ lat: c.lat, lng: c.lng }, z);
+      }
+    };
+
+    mapRef.current.on('moveend', handleMove);
+    mapRef.current.on('zoomend', handleMove);
+
     return () => {
       mapRef.current?.remove();
     };
@@ -77,13 +92,22 @@ const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, onT
       userMarkerRef.current.setLatLng([center.lat, center.lng]);
     }
 
-    if (mapRef.current && !isRecording) {
-      mapRef.current.flyTo([center.lat, center.lng], mapRef.current.getZoom(), {
-        animate: true,
-        duration: 1.0
-      });
+    // Se estiver gravando ou for uma mudança explícita de centro externa (ex: botão focar)
+    if (mapRef.current) {
+      const currentMapCenter = mapRef.current.getCenter();
+      const dist = Math.sqrt(Math.pow(currentMapCenter.lat - center.lat, 2) + Math.pow(currentMapCenter.lng - center.lng, 2));
+      
+      // Só move se a distância for significativa (evitar loops de atualização)
+      if (dist > 0.0001) {
+        isInternalUpdateRef.current = true;
+        mapRef.current.flyTo([center.lat, center.lng], zoom, {
+          animate: true,
+          duration: isRecording ? 0.5 : 1.0
+        });
+        setTimeout(() => { isInternalUpdateRef.current = false; }, 1100);
+      }
     }
-  }, [center, isRecording]);
+  }, [center, zoom, isRecording]);
 
   // Update Path e acompanhamento durante a gravação
   useEffect(() => {
@@ -93,7 +117,9 @@ const GameMap: React.FC<GameMapProps> = ({ currentPath, territories, center, onT
       
       // Durante a gravação, mantém o foco na última posição
       if (isRecording && mapRef.current) {
+        isInternalUpdateRef.current = true;
         mapRef.current.panTo(latlngs[latlngs.length - 1]);
+        setTimeout(() => { isInternalUpdateRef.current = false; }, 100);
       }
     } else if (pathLayerRef.current && currentPath.length === 0) {
       pathLayerRef.current.setLatLngs([]);
