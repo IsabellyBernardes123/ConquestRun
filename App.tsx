@@ -9,7 +9,7 @@ import {
   Menu, Trophy, Loader2, X, Star,
   Clock, ShieldAlert, Award, Shield,
   Terminal, Activity, Lock, User as UserIcon,
-  Target
+  Target, LogOut
 } from 'lucide-react';
 import { getTrainingAdvice, getTerritoryAnalysis, generateDailyMissions } from './services/geminiService';
 import { supabase } from './lib/supabase';
@@ -35,8 +35,10 @@ const App: React.FC = () => {
   });
   
   const [mapZoom, setMapZoom] = useState<number>(() => {
-    const saved = localStorage.getItem('conquest_run_map_zoom');
-    return saved ? parseInt(saved, 10) : MAP_CONFIG.initialZoom;
+    try {
+      const saved = localStorage.getItem('conquest_run_map_zoom');
+      return saved ? parseInt(saved, 10) : MAP_CONFIG.initialZoom;
+    } catch { return MAP_CONFIG.initialZoom; }
   });
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -52,14 +54,18 @@ const App: React.FC = () => {
   useEffect(() => {
     const setup = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (session?.user) {
-          await fetchUserProfile(session.user.id);
+        console.log("Iniciando Verificação de Sessão...");
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+           console.warn("Supabase Auth Error:", error.message);
+        }
+        if (data?.session?.user) {
+          await fetchUserProfile(data.session.user.id);
         }
       } catch (err) {
-        console.error("Erro ao inicializar sessão:", err);
+        console.error("Erro fatal na inicialização:", err);
       } finally {
+        // Garante que o app saia da tela de loader mesmo se o Supabase falhar
         setIsInitializing(false);
       }
     };
@@ -108,6 +114,16 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error("Erro ao carregar perfil:", err);
+      // Fallback para usuário de teste se o banco falhar
+      setCurrentUser({
+        id: userId,
+        name: "Corredor",
+        color: "#3b82f6",
+        level: 1,
+        xp: 0,
+        totalDistance: 0,
+        rankTitle: "Recruta"
+      });
     }
   };
 
@@ -132,7 +148,7 @@ const App: React.FC = () => {
         if (error) throw error;
       }
     } catch (error: any) {
-      setLastNotification("Falha: " + error.message);
+      setLastNotification("Erro: " + error.message);
     } finally {
       setIsLoading(false);
       setTimeout(() => setLastNotification(null), 5000);
@@ -140,7 +156,11 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error(e);
+    }
     setCurrentUser(null);
     setIsSidebarOpen(false);
   };
@@ -162,20 +182,24 @@ const App: React.FC = () => {
   };
 
   const fetchLeaderboard = async () => {
-    const { data } = await supabase.from('profiles').select('*').order('total_distance', { ascending: false }).limit(20);
-    if (data) setLeaderboard(data.map(p => ({
-      id: p.id, name: p.username, color: p.color, level: p.level, xp: p.xp, totalDistance: p.total_distance, rankTitle: getRankTitle(p.level)
-    })));
+    try {
+      const { data } = await supabase.from('profiles').select('*').order('total_distance', { ascending: false }).limit(20);
+      if (data) setLeaderboard(data.map(p => ({
+        id: p.id, name: p.username, color: p.color, level: p.level, xp: p.xp, totalDistance: p.total_distance, rankTitle: getRankTitle(p.level)
+      })));
+    } catch (e) { console.error(e); }
   };
 
   useEffect(() => {
     if (currentUser) {
       fetchLeaderboard();
       const fetchTerritories = async () => {
-        const { data } = await supabase.from('territories').select(`*, profiles(username)`);
-        if (data) setTerritories(data.map(t => ({
-          ...t, ownerName: t.profiles?.username || 'Anonimo', history: t.history || [], fortificationLevel: t.fortification_level || 1
-        })));
+        try {
+          const { data } = await supabase.from('territories').select(`*, profiles(username)`);
+          if (data) setTerritories(data.map(t => ({
+            ...t, ownerName: t.profiles?.username || 'Anonimo', history: t.history || [], fortificationLevel: t.fortification_level || 1
+          })));
+        } catch (e) { console.error(e); }
       };
       fetchTerritories();
       getTrainingAdvice(currentUser.totalDistance, territories.length).then(setAiAdvice);
@@ -190,7 +214,7 @@ const App: React.FC = () => {
           setMapCenter(newPoint);
           setCurrentPath(prev => [...prev, newPoint]);
         }
-      }, (err) => console.error("Erro de GPS:", err), { enableHighAccuracy: true });
+      }, (err) => console.warn("GPS Indisponível:", err), { enableHighAccuracy: true });
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, [isRecording]);
@@ -229,15 +253,17 @@ const App: React.FC = () => {
         const lats = currentPath.map(p => p.lat), lngs = currentPath.map(p => p.lng);
         const centroid = { lat: lats.reduce((a,b)=>a+b)/lats.length, lng: lngs.reduce((a,b)=>a+b)/lngs.length };
         
-        const { data: savedT } = await supabase.from('territories').insert({
-          owner_id: currentUser.id, points: currentPath, area: distance * 10, perimeter: distance, 
-          color: currentUser.color, name: `Setor Recon`, history: [{ date: Date.now(), event: 'captured', user: currentUser.name }]
-        }).select().single();
+        try {
+          const { data: savedT } = await supabase.from('territories').insert({
+            owner_id: currentUser.id, points: currentPath, area: distance * 10, perimeter: distance, 
+            color: currentUser.color, name: `Setor Recon`, history: [{ date: Date.now(), event: 'captured', user: currentUser.name }]
+          }).select().single();
 
-        if (savedT) {
-          const analysis = await getTerritoryAnalysis(savedT, centroid);
-          if (analysis) await supabase.from('territories').update({ name: analysis.newName, strategy: analysis.strategy }).eq('id', savedT.id);
-        }
+          if (savedT) {
+            const analysis = await getTerritoryAnalysis(savedT, centroid);
+            if (analysis) await supabase.from('territories').update({ name: analysis.newName, strategy: analysis.strategy }).eq('id', savedT.id);
+          }
+        } catch (e) { console.error(e); }
       }
     }
 
@@ -253,11 +279,13 @@ const App: React.FC = () => {
       setLastNotification(`NÍVEL ${newLevel}: OPERAÇÃO EVOLUÍDA!`);
     }
 
-    await supabase.from('profiles').update({ 
-      total_distance: currentUser.totalDistance + distKm,
-      xp: finalXP,
-      level: newLevel
-    }).eq('id', currentUser.id);
+    try {
+      await supabase.from('profiles').update({ 
+        total_distance: currentUser.totalDistance + distKm,
+        xp: finalXP,
+        level: newLevel
+      }).eq('id', currentUser.id);
+    } catch (e) { console.error(e); }
 
     setCurrentUser(prev => prev ? ({ ...prev, totalDistance: prev.totalDistance + distKm, xp: finalXP, level: newLevel, rankTitle: getRankTitle(newLevel) }) : null);
     setCurrentPath([]);
@@ -270,7 +298,7 @@ const App: React.FC = () => {
           <Loader2 className="animate-spin text-blue-500 mb-4" size={48} />
           <div className="absolute inset-0 bg-blue-500 blur-2xl opacity-20"></div>
         </div>
-        <p className="text-blue-500 text-[10px] font-bold tracking-[0.5em] animate-pulse">SISTEMA CONQUEST RUN_V1.5</p>
+        <p className="text-blue-500 text-[10px] font-bold tracking-[0.5em] animate-pulse uppercase">Sincronizando Neural Link...</p>
         <div className="mt-4 w-48 h-1 bg-gray-900 rounded-full overflow-hidden">
           <div className="h-full bg-blue-600 animate-[loading_2s_ease-in-out_infinite]"></div>
         </div>
@@ -292,79 +320,62 @@ const App: React.FC = () => {
         <div className="absolute inset-0 bg-gradient-to-t from-blue-900/20 to-transparent pointer-events-none"></div>
 
         <div className="w-full max-w-sm z-10 flex flex-col">
-          <div className="text-center mb-10 animate-in fade-in zoom-in duration-700">
+          <div className="text-center mb-10">
             <div className="inline-flex p-4 rounded-3xl bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.4)] mb-4 border border-blue-400/50">
               <Swords size={40} className="text-white drop-shadow-lg" />
             </div>
             <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">
               CONQUEST<span className="text-blue-500">RUN</span>
             </h1>
-            <div className="flex items-center justify-center space-x-2 mt-2">
-              <div className="h-[1px] w-8 bg-blue-500/50"></div>
-              <p className="text-[9px] text-blue-400 font-bold uppercase tracking-[0.4em]">Protocolo Tactical</p>
-              <div className="h-[1px] w-8 bg-blue-500/50"></div>
-            </div>
+            <p className="text-[9px] text-blue-400 font-bold uppercase tracking-[0.4em] mt-2">Protocolo de Elite</p>
           </div>
 
-          <div className="bg-gray-900/60 backdrop-blur-xl border border-white/10 rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in slide-in-from-bottom-12 duration-500">
+          <div className="bg-gray-900/80 backdrop-blur-xl border border-white/10 rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
             <div className="flex bg-black/40 p-1.5 rounded-2xl">
-              <button onClick={() => setIsRegistering(false)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${!isRegistering ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Activity size={12} />
-                <span>Entrar</span>
+              <button onClick={() => setIsRegistering(false)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${!isRegistering ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>
+                Entrar
               </button>
-              <button onClick={() => setIsRegistering(true)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${isRegistering ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Shield size={12} />
-                <span>Alistar</span>
+              <button onClick={() => setIsRegistering(true)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${isRegistering ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>
+                Cadastrar
               </button>
             </div>
 
             <div className="space-y-4">
-              <div className="space-y-1.5 group">
-                <div className="flex justify-between items-center ml-1">
-                  <label className="text-[9px] font-black uppercase text-gray-500 group-focus-within:text-blue-400 transition-colors">E-mail</label>
-                  <Terminal size={10} className="text-gray-700 group-focus-within:text-blue-400" />
-                </div>
+              <div className="space-y-1 group">
+                <label className="text-[9px] font-black uppercase text-gray-500 ml-1">E-mail</label>
                 <div className="relative">
-                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-blue-500" size={14} />
-                  <input type="email" value={tempEmail} onChange={e=>setTempEmail(e.target.value)} placeholder="seu@email.com" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-gray-700" />
+                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
+                  <input type="email" value={tempEmail} onChange={e=>setTempEmail(e.target.value)} placeholder="seu@email.com" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all text-white" />
                 </div>
               </div>
 
-              <div className="space-y-1.5 group">
-                <div className="flex justify-between items-center ml-1">
-                  <label className="text-[9px] font-black uppercase text-gray-500 group-focus-within:text-blue-400 transition-colors">Senha</label>
-                  <Lock size={10} className="text-gray-700 group-focus-within:text-blue-400" />
-                </div>
+              <div className="space-y-1 group">
+                <label className="text-[9px] font-black uppercase text-gray-500 ml-1">Senha</label>
                 <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-blue-500" size={14} />
-                  <input type="password" value={tempPassword} onChange={e=>setTempPassword(e.target.value)} placeholder="••••••••" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-gray-700" />
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600" size={14} />
+                  <input type="password" value={tempPassword} onChange={e=>setTempPassword(e.target.value)} placeholder="********" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all text-white" />
                 </div>
               </div>
 
               {isRegistering && (
-                <div className="space-y-1.5 animate-in slide-in-from-top-4 duration-300 group">
-                  <label className="text-[9px] font-black uppercase text-gray-500 ml-1 group-focus-within:text-blue-400">Codename Tático</label>
-                  <input type="text" value={tempName} onChange={e=>setTempName(e.target.value)} placeholder="NOME_DE_GUERRA" className="w-full bg-black/40 border border-white/5 rounded-2xl px-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all placeholder:text-gray-700 uppercase" />
+                <div className="space-y-1 group animate-in slide-in-from-top-2">
+                  <label className="text-[9px] font-black uppercase text-gray-500 ml-1">Codename</label>
+                  <input type="text" value={tempName} onChange={e=>setTempName(e.target.value)} placeholder="AGENTE" className="w-full bg-black/40 border border-white/5 rounded-2xl px-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all text-white uppercase" />
                 </div>
               )}
             </div>
 
-            <button onClick={handleAuth} disabled={isLoading} className="w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-2xl font-black uppercase tracking-[0.2em] text-[12px] transition-all shadow-xl shadow-blue-900/30 flex items-center justify-center space-x-3 active:scale-95">
-              {isLoading ? <Loader2 className="animate-spin" size={20} /> : (
-                <>
-                  <span>{isRegistering ? 'Confirmar Alistamento' : 'Entrar'}</span>
-                  {!isRegistering && <Activity size={16} className="animate-pulse" />}
-                </>
-              )}
+            <button onClick={handleAuth} disabled={isLoading} className="w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-2xl font-black uppercase text-[12px] shadow-xl transition-all active:scale-95">
+              {isLoading ? <Loader2 className="animate-spin mx-auto" size={20} /> : (isRegistering ? 'Confirmar Cadastro' : 'Acessar Sistema')}
             </button>
 
             {lastNotification && (
-              <div className="bg-blue-900/20 border border-blue-500/20 p-3 rounded-xl">
-                <p className="text-[9px] text-center font-bold text-blue-300 leading-tight uppercase">{lastNotification}</p>
+              <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center">
+                <p className="text-[9px] font-bold text-red-400 uppercase leading-tight">{lastNotification}</p>
               </div>
             )}
           </div>
-          <p className="mt-8 text-[9px] text-center text-gray-700 font-black uppercase tracking-[0.5em]">Global Control v1.5 // Secure_Connection</p>
+          <p className="mt-8 text-[8px] text-center text-gray-700 font-black uppercase tracking-[0.5em]">Global Control v1.5 // Secure_Connection</p>
         </div>
       </div>
     );
@@ -384,6 +395,7 @@ const App: React.FC = () => {
       />
       
       <main className="flex-1 relative flex flex-col">
+        {/* Top bar with menu */}
         <div className="absolute top-4 left-4 z-40">
           <button onClick={() => setIsSidebarOpen(true)} className="w-11 h-11 bg-black/60 backdrop-blur-md border border-white/10 rounded-2xl flex items-center justify-center hover:bg-black/80 transition-all shadow-xl">
             <Menu size={20} />
@@ -400,8 +412,10 @@ const App: React.FC = () => {
           onViewChange={(c, z) => {
             setMapCenter(c);
             setMapZoom(z);
-            localStorage.setItem('conquest_run_map_center', JSON.stringify(c));
-            localStorage.setItem('conquest_run_map_zoom', z.toString());
+            try {
+              localStorage.setItem('conquest_run_map_center', JSON.stringify(c));
+              localStorage.setItem('conquest_run_map_zoom', z.toString());
+            } catch (e) {}
           }}
         />
 
@@ -441,7 +455,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex flex-col items-center space-y-2">
-              <button onClick={() => setIsRankingOpen(false)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
+              <button onClick={() => setIsSidebarOpen(true)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
                 <Target size={24}/>
               </button>
               <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">Missões</span>
