@@ -2,10 +2,9 @@
 import { User, Territory } from './types';
 
 export const MOCK_USERS: User[] = [
-  // Fixed missing rankTitle property
-  { id: '1', name: 'Você', color: '#3b82f6', level: 5, xp: 1250, totalDistance: 45.2, rankTitle: 'Batedor Urbano' },
-  { id: '2', name: 'Marcos_Ninja', color: '#ef4444', level: 8, xp: 2100, totalDistance: 88.5, rankTitle: 'Operador Fantasma' },
-  { id: '3', name: 'Ana_Runner', color: '#10b981', level: 4, xp: 900, totalDistance: 32.1, rankTitle: 'Recruta' },
+  { id: '1', name: 'Você', color: '#3b82f6', level: 5, xp: 1250, totalDistance: 45.2 },
+  { id: '2', name: 'Marcos_Ninja', color: '#ef4444', level: 8, xp: 2100, totalDistance: 88.5 },
+  { id: '3', name: 'Ana_Runner', color: '#10b981', level: 4, xp: 900, totalDistance: 32.1 },
 ];
 
 export const INITIAL_TERRITORIES: Territory[] = [
@@ -25,8 +24,6 @@ export const INITIAL_TERRITORIES: Territory[] = [
     color: '#ef4444',
     name: 'Distrito Central',
     defenses: 12,
-    // Fixed missing fortificationLevel property
-    fortificationLevel: 1,
     strategy: 'Mantenha um ritmo constante no perímetro norte para evitar infiltrações.',
     history: [
       { date: Date.now() - 86400000, event: 'captured', user: 'Marcos_Ninja' },

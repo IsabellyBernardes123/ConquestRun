@@ -2,21 +2,19 @@
 import React, { useState, useEffect } from 'react';
 import GameMap from './components/GameMap';
 import Sidebar from './components/Sidebar';
-import { Coordinate, Territory, User, Mission } from './types';
+import { Coordinate, Territory, User } from './types';
 import { MAP_CONFIG } from './constants';
 import { 
-  Play, Square, MapPin, Swords, 
-  Menu, Trophy, Loader2, X, Star,
-  Clock, ShieldAlert, Award, Shield,
-  Terminal, Activity, Lock, User as UserIcon,
-  Target
+  Play, Square, MapPin, ShieldCheck, Swords, 
+  Menu, Trophy, Navigation, 
+  ChevronRight, Loader2, X, Medal, Star,
+  History, Clock, ShieldAlert
 } from 'lucide-react';
-import { getTrainingAdvice, getTerritoryAnalysis, generateDailyMissions } from './services/geminiService';
+import { getTrainingAdvice, getTerritoryAnalysis } from './services/geminiService';
 import { supabase } from './lib/supabase';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
   const [leaderboard, setLeaderboard] = useState<User[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [currentPath, setCurrentPath] = useState<Coordinate[]>([]);
@@ -25,8 +23,8 @@ const App: React.FC = () => {
   const [isRankingOpen, setIsRankingOpen] = useState(false);
   const [aiAdvice, setAiAdvice] = useState("");
   const [lastNotification, setLastNotification] = useState<string | null>(null);
-  const [missions, setMissions] = useState<Mission[]>([]);
   
+  // Persistência de estado do mapa
   const [mapCenter, setMapCenter] = useState<Coordinate>(() => {
     const saved = localStorage.getItem('conquest_run_map_center');
     return saved ? JSON.parse(saved) : MAP_CONFIG.initialCenter;
@@ -39,7 +37,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Login States
+  // Auth states
   const [isRegistering, setIsRegistering] = useState(false);
   const [tempEmail, setTempEmail] = useState("");
   const [tempName, setTempName] = useState("");
@@ -47,14 +45,11 @@ const App: React.FC = () => {
   const [tempColor, setTempColor] = useState("#3b82f6");
 
   useEffect(() => {
-    const setup = async () => {
+    const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await fetchUserProfile(session.user.id);
-      }
-      setIsInitializing(false);
+      if (session?.user) fetchUserProfile(session.user.id);
     };
-    setup();
+    checkSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) fetchUserProfile(session.user.id);
@@ -64,84 +59,37 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const getRankTitle = (level: number) => {
-    if (level < 3) return "Recruta";
-    if (level < 7) return "Batedor Urbano";
-    if (level < 12) return "Operador Fantasma";
-    if (level < 20) return "Comandante de Elite";
-    return "Lenda das Ruas";
-  };
-
   const fetchUserProfile = async (userId: string) => {
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (data) {
-      const user: User = {
+      setCurrentUser({
         id: data.id,
         name: data.username,
         color: data.color,
         level: data.level,
         xp: data.xp,
-        totalDistance: data.total_distance,
-        rankTitle: getRankTitle(data.level)
-      };
-      setCurrentUser(user);
-      
-      const savedMissions = localStorage.getItem(`missions_${userId}`);
-      if (savedMissions) {
-        setMissions(JSON.parse(savedMissions));
-      } else {
-        const newMissions = await generateDailyMissions(user.level);
-        setMissions(newMissions);
-        localStorage.setItem(`missions_${userId}`, JSON.stringify(newMissions));
-      }
-    }
-  };
-
-  const handleAuth = async () => {
-    setIsLoading(true);
-    if (isRegistering) {
-      const { error } = await supabase.auth.signUp({
-        email: tempEmail,
-        password: tempPassword,
-        options: { data: { username: tempName, color: tempColor } }
+        totalDistance: data.total_distance
       });
-      if (error) setLastNotification(error.message);
-      else setLastNotification("Neural Link estabelecido. Verifique e-mail.");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email: tempEmail, password: tempPassword });
-      if (error) setLastNotification("Falha na sincronização: " + error.message);
     }
-    setIsLoading(false);
-    setTimeout(() => setLastNotification(null), 4000);
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setCurrentUser(null);
-    setIsSidebarOpen(false);
-  };
-
-  const updateMissionProgress = (type: 'distance' | 'capture' | 'fortify', amount: number) => {
-    setMissions(prev => {
-      const next = prev.map(m => {
-        if (m.type === type && !m.completed) {
-          const newCurrent = m.current + amount;
-          const isNowCompleted = newCurrent >= m.target;
-          if (isNowCompleted) setLastNotification(`MISSÃO CUMPRIDA: ${m.title} (+${m.xpReward} XP)`);
-          return { ...m, current: newCurrent, completed: isNowCompleted };
-        }
-        return m;
-      });
-      if (currentUser) localStorage.setItem(`missions_${currentUser.id}`, JSON.stringify(next));
-      return next;
-    });
   };
 
   const fetchLeaderboard = async () => {
-    const { data } = await supabase.from('profiles').select('*').order('total_distance', { ascending: false }).limit(20);
-    if (data) setLeaderboard(data.map(p => ({
-      id: p.id, name: p.username, color: p.color, level: p.level, xp: p.xp, totalDistance: p.total_distance, rankTitle: getRankTitle(p.level)
-    })));
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('total_distance', { ascending: false })
+      .limit(20);
+    
+    if (data) {
+      setLeaderboard(data.map(p => ({
+        id: p.id,
+        name: p.username,
+        color: p.color,
+        level: p.level,
+        xp: p.xp,
+        totalDistance: p.total_distance
+      })));
+    }
   };
 
   useEffect(() => {
@@ -149,19 +97,23 @@ const App: React.FC = () => {
       fetchLeaderboard();
       const fetchTerritories = async () => {
         const { data } = await supabase.from('territories').select(`*, profiles(username)`);
-        if (data) setTerritories(data.map(t => ({
-          ...t, ownerName: t.profiles?.username || 'Anonimo', history: t.history || [], fortificationLevel: t.fortification_level || 1
-        })));
+        if (data) {
+          setTerritories(data.map(t => ({
+            ...t,
+            ownerName: t.profiles?.username || 'Anonimo',
+            history: t.history || []
+          })));
+        }
       };
       fetchTerritories();
-      getTrainingAdvice(currentUser.totalDistance, territories.length).then(setAiAdvice);
     }
-  }, [currentUser, territories.length]);
+  }, [currentUser]);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
       const watchId = navigator.geolocation.watchPosition((position) => {
         const newPoint = { lat: position.coords.latitude, lng: position.coords.longitude };
+        // Apenas centraliza automaticamente se estiver gravando
         if (isRecording) {
           setMapCenter(newPoint);
           setCurrentPath(prev => [...prev, newPoint]);
@@ -171,6 +123,29 @@ const App: React.FC = () => {
     }
   }, [isRecording]);
 
+  useEffect(() => {
+    if (currentUser) {
+      getTrainingAdvice(currentUser.totalDistance, territories.filter(t => t.ownerId === currentUser.id).length)
+        .then(setAiAdvice);
+    }
+  }, [currentUser, territories.length]);
+
+  const handleAuth = async () => {
+    setIsLoading(true);
+    if (isRegistering) {
+      const { data, error } = await supabase.auth.signUp({
+        email: tempEmail,
+        password: tempPassword,
+        options: { data: { username: tempName, color: tempColor } }
+      });
+      if (error) setLastNotification(error.message);
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email: tempEmail, password: tempPassword });
+      if (error) setLastNotification(error.message);
+    }
+    setIsLoading(false);
+  };
+
   const calculateDistance = (path: Coordinate[]) => {
     let total = 0;
     for (let i = 1; i < path.length; i++) {
@@ -178,6 +153,26 @@ const App: React.FC = () => {
       total += d * 111320; 
     }
     return total;
+  };
+
+  const checkClosedLoop = (path: Coordinate[]) => {
+    if (path.length < 8) return false;
+    const start = path[0], end = path[path.length - 1];
+    const dist = Math.sqrt(Math.pow(start.lat - end.lat, 2) + Math.pow(start.lng - end.lng, 2));
+    return dist < 0.00025;
+  };
+
+  const processXP = (currentXP: number, currentLevel: number, gain: number) => {
+    let newXP = currentXP + gain;
+    let newLevel = currentLevel;
+    const xpToNext = currentLevel * 1000;
+
+    if (newXP >= xpToNext) {
+      newXP -= xpToNext;
+      newLevel += 1;
+      setLastNotification(`LEVEL UP! NÍVEL ${newLevel}`);
+    }
+    return { newXP, newLevel };
   };
 
   const handleStop = async () => {
@@ -189,315 +184,329 @@ const App: React.FC = () => {
     let xpGain = Math.floor(distKm * 100); 
     let captureBonus = 0;
 
-    updateMissionProgress('distance', distKm);
+    if (checkClosedLoop(currentPath) && currentPath.length > 5) {
+      captureBonus = 500; 
+      setLastNotification("Analisando Setor...");
+      const lats = currentPath.map(p => p.lat), lngs = currentPath.map(p => p.lng);
+      const centroid = { lat: lats.reduce((a,b)=>a+b)/lats.length, lng: lngs.reduce((a,b)=>a+b)/lngs.length };
+      
+      const eventHistory = [{ date: Date.now(), event: 'captured', user: currentUser.name }];
+      
+      const { data: savedT } = await supabase.from('territories').insert({
+        owner_id: currentUser.id, 
+        points: currentPath, 
+        area: distance * 10, 
+        perimeter: distance, 
+        color: currentUser.color, 
+        name: `Setor`,
+        history: eventHistory
+      }).select().single();
 
-    if (distKm > 0.05 && currentPath.length > 5) {
-      const isClosed = (path: Coordinate[]) => {
-        const start = path[0], end = path[path.length - 1];
-        return Math.sqrt(Math.pow(start.lat-end.lat, 2) + Math.pow(start.lng-end.lng, 2)) < 0.00025;
-      };
-
-      if (isClosed(currentPath)) {
-        captureBonus = 500;
-        updateMissionProgress('capture', 1);
-        setLastNotification("SETOR CONQUISTADO!");
-        
-        const lats = currentPath.map(p => p.lat), lngs = currentPath.map(p => p.lng);
-        const centroid = { lat: lats.reduce((a,b)=>a+b)/lats.length, lng: lngs.reduce((a,b)=>a+b)/lngs.length };
-        
-        const { data: savedT } = await supabase.from('territories').insert({
-          owner_id: currentUser.id, points: currentPath, area: distance * 10, perimeter: distance, 
-          color: currentUser.color, name: `Setor Recon`, history: [{ date: Date.now(), event: 'captured', user: currentUser.name }]
-        }).select().single();
-
-        if (savedT) {
-          const analysis = await getTerritoryAnalysis(savedT, centroid);
-          if (analysis) await supabase.from('territories').update({ name: analysis.newName, strategy: analysis.strategy }).eq('id', savedT.id);
+      if (savedT) {
+        const analysis = await getTerritoryAnalysis(savedT, centroid);
+        if (analysis) {
+          await supabase.from('territories').update({ name: analysis.newName, strategy: analysis.strategy }).eq('id', savedT.id);
+          setLastNotification(`Conquistado: ${analysis.newName} (+${xpGain + captureBonus} XP)`);
         }
       }
+    } else {
+      xpGain += 50; 
+      setLastNotification(`Patrulha Concluída (+${xpGain} XP)`);
     }
 
-    const missionXP = missions.filter(m => m.completed).reduce((acc, m) => acc + m.xpReward, 0);
-    const nextXP = currentUser.xp + xpGain + captureBonus + missionXP;
-    const xpToNext = currentUser.level * 1000;
-    let newLevel = currentUser.level;
-    let finalXP = nextXP;
-
-    if (finalXP >= xpToNext) {
-      finalXP -= xpToNext;
-      newLevel += 1;
-      setLastNotification(`NÍVEL ${newLevel}: OPERAÇÃO EVOLUÍDA!`);
-    }
+    const { newXP, newLevel } = processXP(currentUser.xp, currentUser.level, xpGain + captureBonus);
+    const newTotalDist = currentUser.totalDistance + distKm;
 
     await supabase.from('profiles').update({ 
-      total_distance: currentUser.totalDistance + distKm,
-      xp: finalXP,
+      total_distance: newTotalDist,
+      xp: newXP,
       level: newLevel
     }).eq('id', currentUser.id);
 
-    setCurrentUser(prev => prev ? ({ ...prev, totalDistance: prev.totalDistance + distKm, xp: finalXP, level: newLevel, rankTitle: getRankTitle(newLevel) }) : null);
+    setCurrentUser(prev => prev ? ({
+      ...prev, 
+      totalDistance: newTotalDist, 
+      xp: newXP, 
+      level: newLevel
+    }) : null);
+
     setCurrentPath([]);
+    setTimeout(() => setLastNotification(null), 4000);
   };
 
-  // Boot sequence animation while initializing
-  if (isInitializing) {
-    return (
-      <div className="h-screen bg-[#020617] flex flex-col items-center justify-center font-mono">
-        <div className="relative">
-          <Loader2 className="animate-spin text-blue-500 mb-4" size={48} />
-          <div className="absolute inset-0 bg-blue-500 blur-2xl opacity-20"></div>
-        </div>
-        <p className="text-blue-500 text-[10px] font-bold tracking-[0.5em] animate-pulse">SISTEMA CONQUEST RUN_V1.5</p>
-        <div className="mt-4 w-48 h-1 bg-gray-900 rounded-full overflow-hidden">
-          <div className="h-full bg-blue-600 animate-[loading_2s_ease-in-out_infinite]"></div>
-        </div>
-        <style>{`
-          @keyframes loading {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-          }
-        `}</style>
-      </div>
-    );
-  }
+  const handleViewChange = (center: Coordinate, zoom: number) => {
+    setMapCenter(center);
+    setMapZoom(zoom);
+    localStorage.setItem('conquest_run_map_center', JSON.stringify(center));
+    localStorage.setItem('conquest_run_map_zoom', zoom.toString());
+  };
+
+  const handleLocate = () => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        const newPoint = { lat: position.coords.latitude, lng: position.coords.longitude };
+        handleViewChange(newPoint, 16);
+      });
+    }
+  };
+
+  const getEventIcon = (event: string) => {
+    switch (event) {
+      case 'captured': return <Swords size={12} className="text-red-500" />;
+      case 'defended': return <ShieldCheck size={12} className="text-green-500" />;
+      case 'lost': return <ShieldAlert size={12} className="text-orange-500" />;
+      default: return <Clock size={12} className="text-gray-400" />;
+    }
+  };
+
+  const getEventLabel = (event: string) => {
+    switch (event) {
+      case 'captured': return 'Conquistado';
+      case 'defended': return 'Defendido';
+      case 'lost': return 'Perdido';
+      default: return 'Evento';
+    }
+  };
 
   if (!currentUser) {
     return (
-      <div className="h-screen bg-[#020617] relative flex items-center justify-center p-6 overflow-hidden">
-        {/* Background Effects */}
-        <div className="absolute inset-0 z-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#3b82f6 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
-        <div className="absolute inset-0 bg-gradient-to-t from-blue-900/20 to-transparent pointer-events-none"></div>
-
-        <div className="w-full max-w-sm z-10 flex flex-col">
-          <div className="text-center mb-10 animate-in fade-in zoom-in duration-700">
-            <div className="inline-flex p-4 rounded-3xl bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.4)] mb-4 border border-blue-400/50">
-              <Swords size={40} className="text-white drop-shadow-lg" />
-            </div>
-            <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">
-              CONQUEST<span className="text-blue-500">RUN</span>
-            </h1>
-            <div className="flex items-center justify-center space-x-2 mt-2">
-              <div className="h-[1px] w-8 bg-blue-500/50"></div>
-              <p className="text-[9px] text-blue-400 font-bold uppercase tracking-[0.4em]">Protocolo Tactical</p>
-              <div className="h-[1px] w-8 bg-blue-500/50"></div>
-            </div>
+      <div className="h-screen bg-[#0a0f18] flex flex-col items-center justify-center p-6 font-sans">
+        <div className="mb-6 text-center">
+          <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-900/20">
+            <Swords size={24} />
           </div>
-
-          <div className="bg-gray-900/60 backdrop-blur-xl border border-white/10 rounded-[2.5rem] p-8 space-y-6 shadow-2xl animate-in slide-in-from-bottom-12 duration-500">
-            <div className="flex bg-black/40 p-1.5 rounded-2xl">
-              <button onClick={() => setIsRegistering(false)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${!isRegistering ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Activity size={12} />
-                <span>Sync</span>
-              </button>
-              <button onClick={() => setIsRegistering(true)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${isRegistering ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-gray-300'}`}>
-                <Shield size={12} />
-                <span>Alistar</span>
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div className="space-y-1.5 group">
-                <div className="flex justify-between items-center ml-1">
-                  <label className="text-[9px] font-black uppercase text-gray-500 group-focus-within:text-blue-400 transition-colors">Neural Identity</label>
-                  <Terminal size={10} className="text-gray-700 group-focus-within:text-blue-400" />
-                </div>
-                <div className="relative">
-                  <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-blue-500" size={14} />
-                  <input type="email" value={tempEmail} onChange={e=>setTempEmail(e.target.value)} placeholder="user_ID@run.net" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-gray-700" />
-                </div>
-              </div>
-
-              <div className="space-y-1.5 group">
-                <div className="flex justify-between items-center ml-1">
-                  <label className="text-[9px] font-black uppercase text-gray-500 group-focus-within:text-blue-400 transition-colors">Encryption Key</label>
-                  <Lock size={10} className="text-gray-700 group-focus-within:text-blue-400" />
-                </div>
-                <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-blue-500" size={14} />
-                  <input type="password" value={tempPassword} onChange={e=>setTempPassword(e.target.value)} placeholder="••••••••" className="w-full bg-black/40 border border-white/5 rounded-2xl pl-11 pr-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all placeholder:text-gray-700" />
-                </div>
-              </div>
-
-              {isRegistering && (
-                <div className="space-y-1.5 animate-in slide-in-from-top-4 duration-300 group">
-                  <label className="text-[9px] font-black uppercase text-gray-500 ml-1 group-focus-within:text-blue-400">Codename Tático</label>
-                  <input type="text" value={tempName} onChange={e=>setTempName(e.target.value)} placeholder="AGENTE_ALFA" className="w-full bg-black/40 border border-white/5 rounded-2xl px-4 py-4 text-xs font-mono focus:outline-none focus:border-blue-500 transition-all placeholder:text-gray-700 uppercase" />
-                </div>
-              )}
-            </div>
-
-            <button onClick={handleAuth} disabled={isLoading} className="w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-2xl font-black uppercase tracking-[0.2em] text-[12px] transition-all shadow-xl shadow-blue-900/30 flex items-center justify-center space-x-3 active:scale-95">
-              {isLoading ? <Loader2 className="animate-spin" size={20} /> : (
-                <>
-                  <span>{isRegistering ? 'Confirmar Alistamento' : 'Iniciar Sequência'}</span>
-                  {!isRegistering && <Activity size={16} className="animate-pulse" />}
-                </>
-              )}
-            </button>
-
-            {lastNotification && (
-              <div className="bg-blue-900/20 border border-blue-500/20 p-3 rounded-xl animate-pulse">
-                <p className="text-[9px] text-center font-bold text-blue-300 leading-tight uppercase">{lastNotification}</p>
-              </div>
-            )}
+          <h1 className="text-2xl font-black tracking-tighter uppercase italic">CONQUEST<span className="text-blue-500">RUN</span></h1>
+        </div>
+        <div className="w-full max-w-xs bg-gray-900/50 border border-white/5 rounded-xl p-5 space-y-4">
+          <div className="flex bg-black/40 p-1 rounded-md">
+            <button onClick={() => setIsRegistering(false)} className={`flex-1 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${!isRegistering ? 'bg-blue-600' : 'text-gray-500'}`}>Entrar</button>
+            <button onClick={() => setIsRegistering(true)} className={`flex-1 py-1.5 rounded text-[9px] font-bold uppercase transition-all ${isRegistering ? 'bg-blue-600' : 'text-gray-500'}`}>Criar</button>
           </div>
-          <p className="mt-8 text-[9px] text-center text-gray-700 font-black uppercase tracking-[0.5em]">Global Control v1.5 // Secure_Connection</p>
+          <div className="space-y-2">
+            <input type="email" value={tempEmail} onChange={e=>setTempEmail(e.target.value)} placeholder="E-mail" className="w-full bg-gray-800 border border-white/5 rounded-lg px-3 py-2.5 text-xs focus:outline-none focus:border-blue-500" />
+            <input type="password" value={tempPassword} onChange={e=>setTempPassword(e.target.value)} placeholder="Senha" className="w-full bg-gray-800 border border-white/5 rounded-lg px-3 py-2.5 text-xs focus:outline-none focus:border-blue-500" />
+            {isRegistering && <input type="text" value={tempName} onChange={e=>setTempName(e.target.value)} placeholder="Codename" className="w-full bg-gray-800 border border-white/5 rounded-lg px-3 py-2.5 text-xs focus:outline-none focus:border-blue-500" />}
+          </div>
+          <button onClick={handleAuth} disabled={isLoading} className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center">
+            {isLoading ? <Loader2 className="animate-spin" size={16} /> : (isRegistering ? 'Confirmar' : 'Acessar')}
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-[#020617] text-white overflow-hidden select-none font-sans">
-      <Sidebar 
-        currentUser={currentUser} 
-        territories={territories} 
-        leaderboard={leaderboard.slice(0, 5)} 
-        aiAdvice={aiAdvice} 
-        isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)}
-        onLogout={handleLogout}
-        missions={missions}
-      />
+    <div className="flex h-screen bg-[#0a0f18] text-white overflow-hidden select-none font-sans">
+      <Sidebar currentUser={currentUser} territories={territories} leaderboard={leaderboard.slice(0, 5)} aiAdvice={aiAdvice} isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       
       <main className="flex-1 relative flex flex-col">
         <div className="absolute top-4 left-4 z-40">
-          <button onClick={() => setIsSidebarOpen(true)} className="w-11 h-11 bg-black/60 backdrop-blur-md border border-white/10 rounded-2xl flex items-center justify-center hover:bg-black/80 transition-all shadow-xl">
-            <Menu size={20} />
+          <button onClick={() => setIsSidebarOpen(true)} className="w-9 h-9 bg-black/60 backdrop-blur-md border border-white/10 rounded-lg flex items-center justify-center hover:bg-black/80 transition-all">
+            <Menu size={16} />
           </button>
         </div>
 
-        <GameMap 
-          currentPath={currentPath} 
-          territories={territories} 
-          center={mapCenter} 
-          zoom={mapZoom}
-          onTerritoryClick={setSelectedTerritory} 
-          isRecording={isRecording}
-          onViewChange={(c, z) => {
-            setMapCenter(c);
-            setMapZoom(z);
-            localStorage.setItem('conquest_run_map_center', JSON.stringify(c));
-            localStorage.setItem('conquest_run_map_zoom', z.toString());
-          }}
-        />
+        <div className="flex-1">
+          <GameMap 
+            currentPath={currentPath} 
+            territories={territories} 
+            center={mapCenter} 
+            zoom={mapZoom}
+            onTerritoryClick={setSelectedTerritory} 
+            isRecording={isRecording}
+            onViewChange={handleViewChange}
+          />
+        </div>
 
-        {/* Notificações Táticas */}
-        <div className="absolute top-16 left-0 right-0 z-40 flex justify-center pointer-events-none px-6">
+        {/* Modal de Detalhes do Território com Histórico */}
+        {selectedTerritory && (
+          <div className="absolute inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm px-4 pb-8" onClick={() => setSelectedTerritory(null)}>
+            <div className="bg-[#0a0f18] border border-white/10 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-in slide-in-from-bottom-8 flex flex-col max-h-[85vh]" onClick={e=>e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-black uppercase tracking-tight leading-tight">{selectedTerritory.name}</h2>
+                  <p className="text-gray-400 text-[9px] uppercase font-black tracking-[0.2em] mt-0.5">Operador Atual: {selectedTerritory.ownerName}</p>
+                </div>
+                <button onClick={() => setSelectedTerritory(null)} className="p-1 hover:bg-white/5 rounded-lg transition-colors">
+                  <X size={18} className="text-gray-500" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-5 custom-scrollbar pr-1">
+                <section>
+                  <div className="flex items-center space-x-2 mb-2">
+                    <History size={12} className="text-blue-500" />
+                    <h3 className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Informação Estratégica</h3>
+                  </div>
+                  <div className="bg-blue-950/20 border border-blue-900/20 p-3 rounded-xl italic">
+                    <p className="text-[10px] text-blue-100 leading-relaxed leading-relaxed">
+                      "{selectedTerritory.strategy || 'Nenhuma estratégia registrada para este setor.'}"
+                    </p>
+                  </div>
+                </section>
+
+                <section>
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Clock size={12} className="text-yellow-500" />
+                    <h3 className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Log de Eventos do Setor</h3>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedTerritory.history && selectedTerritory.history.length > 0 ? (
+                      [...selectedTerritory.history]
+                        .sort((a, b) => b.date - a.date)
+                        .map((entry, idx) => (
+                          <div key={idx} className="bg-gray-900/40 border border-white/5 rounded-xl p-2.5 flex items-center justify-between group hover:bg-gray-800/40 transition-all">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-7 h-7 bg-black/40 rounded-lg flex items-center justify-center border border-white/5">
+                                {getEventIcon(entry.event)}
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-black uppercase tracking-tight leading-none mb-0.5">{getEventLabel(entry.event)}</p>
+                                <p className="text-[8px] text-gray-500 font-bold">Por: {entry.user}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[9px] font-mono text-gray-400 leading-none">
+                                {new Date(entry.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                              </p>
+                              <p className="text-[8px] font-mono text-gray-600 uppercase mt-0.5">
+                                {new Date(entry.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </div>
+                          </div>
+                        ))
+                    ) : (
+                      <div className="text-center py-4 border border-dashed border-white/5 rounded-xl">
+                        <p className="text-[9px] text-gray-600 font-black uppercase tracking-widest">Nenhum histórico disponível</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+
+              <div className="mt-5 pt-4 border-t border-white/5 flex gap-2">
+                <button 
+                  onClick={() => setSelectedTerritory(null)} 
+                  className="flex-1 py-3 bg-gray-800/80 hover:bg-gray-700 rounded-xl font-bold uppercase text-[9px] tracking-widest transition-all"
+                >
+                  Fechar Registro
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isRankingOpen && (
+          <div className="absolute inset-0 z-[110] flex flex-col bg-[#0a0f18] animate-in slide-in-from-right-full duration-300">
+            <div className="p-4 flex items-center justify-between border-b border-white/5 bg-gray-950/50">
+              <div className="flex items-center space-x-3">
+                <Trophy size={18} className="text-yellow-500" />
+                <h2 className="text-sm font-black uppercase tracking-widest">Ranking Global</h2>
+              </div>
+              <button onClick={() => setIsRankingOpen(false)} className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+              {leaderboard.map((user, idx) => {
+                const isTop3 = idx < 3;
+                const colors = ['text-yellow-400', 'text-gray-300', 'text-amber-600'];
+                return (
+                  <div 
+                    key={user.id} 
+                    className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                      user.id === currentUser.id ? 'bg-blue-600/20 border-blue-500/50' : 'bg-gray-900/40 border-white/5'
+                    } ${isTop3 ? 'scale-[1.02] shadow-lg' : ''}`}
+                  >
+                    <div className="flex items-center space-x-4">
+                      <div className="w-6 text-center font-black text-[10px] font-mono opacity-50">
+                        {idx + 1}
+                      </div>
+                      <div className={`relative`}>
+                        <div className="w-9 h-9 rounded-lg border flex items-center justify-center font-black text-xs shadow-inner" style={{ borderColor: user.color, backgroundColor: `${user.color}15` }}>
+                          {user.name[0]}
+                        </div>
+                        {isTop3 && (
+                          <div className={`absolute -top-1 -right-1 ${colors[idx]}`}>
+                            <Medal size={14} fill="currentColor" />
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <span className={`text-xs font-black block leading-none uppercase tracking-tight ${isTop3 ? colors[idx] : ''}`}>{user.name}</span>
+                        <span className="text-[8px] text-gray-500 font-black uppercase tracking-widest">Nível {user.level}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black text-white leading-none">{user.totalDistance.toFixed(1)}</p>
+                      <p className="text-[7px] text-gray-600 font-bold uppercase tracking-tighter">km total</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="absolute top-16 left-0 right-0 z-40 flex justify-center px-6 pointer-events-none">
           {lastNotification && (
-            <div className="bg-blue-600 px-6 py-4 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.4)] border border-white/20 animate-in slide-in-from-top-10 flex items-center space-x-4">
-              <Award size={20} className="text-yellow-400 animate-bounce" />
-              <span className="text-[11px] font-black uppercase tracking-widest">{lastNotification}</span>
+            <div className="bg-blue-600 px-5 py-2.5 rounded-lg shadow-xl flex items-center space-x-3 animate-in slide-in-from-top-4 border border-white/20">
+              <Star size={14} className="animate-spin-slow" />
+              <span className="text-[9px] font-black uppercase tracking-widest">{lastNotification}</span>
             </div>
           )}
         </div>
 
-        {/* HUD Inferior */}
-        <div className="absolute bottom-8 left-0 right-0 z-40 px-6">
-          <div className="flex items-end justify-center space-x-8">
-            <div className="flex flex-col items-center space-y-2">
-              <button onClick={() => setIsRankingOpen(true)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
-                <Trophy size={24}/>
+        <div className="p-4 z-40 space-y-4">
+          {isRecording && (
+            <div className="bg-black/80 backdrop-blur-xl border border-white/5 p-3 rounded-xl flex justify-around w-full max-w-[280px] mx-auto shadow-2xl">
+              <div className="text-center">
+                <p className="text-[7px] text-gray-500 uppercase font-black tracking-tighter">Distância</p>
+                <p className="text-base font-black text-blue-400">{(calculateDistance(currentPath)/1000).toFixed(2)} km</p>
+              </div>
+              <div className="text-center">
+                <p className="text-[7px] text-gray-500 uppercase font-black tracking-tighter">Perímetro</p>
+                <div className={`text-[8px] font-black uppercase mt-1 ${checkClosedLoop(currentPath) ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {checkClosedLoop(currentPath) ? 'Fechado' : 'Mapeando'}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          <div className="flex items-end justify-center space-x-6 pb-2">
+            <div className="flex flex-col items-center space-y-1">
+              <button onClick={handleLocate} className="w-10 h-10 bg-gray-900/80 border border-white/10 rounded-xl flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-lg active:scale-90">
+                <MapPin size={18}/>
               </button>
-              <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">Ranking</span>
+              <span className="text-[7px] font-black uppercase tracking-widest text-gray-600">Focar</span>
             </div>
 
-            <div className="flex flex-col items-center space-y-3">
+            <div className="flex flex-col items-center space-y-1">
               {!isRecording ? (
-                <button onClick={() => setIsRecording(true)} className="bg-blue-600 w-24 h-24 rounded-[2rem] shadow-[0_0_50px_rgba(37,99,235,0.3)] flex items-center justify-center active:scale-95 transition-all group border-4 border-white/10">
-                  <Play size={40} fill="currentColor" className="ml-1 text-white group-hover:scale-110 transition-transform" />
+                <button onClick={() => setIsRecording(true)} className="bg-blue-600 w-16 h-16 rounded-2xl shadow-lg shadow-blue-900/40 flex items-center justify-center active:scale-95 transition-all group">
+                  <Play size={28} fill="currentColor" className="ml-1 text-white group-hover:scale-110 transition-transform" />
                 </button>
               ) : (
-                <button onClick={handleStop} className="bg-red-600 w-24 h-24 rounded-[2rem] shadow-[0_0_50px_rgba(220,38,38,0.3)] flex items-center justify-center animate-pulse active:scale-95 transition-all border-4 border-white/10">
-                  <Square size={36} fill="currentColor" className="text-white" />
+                <button onClick={handleStop} className="bg-red-600 w-16 h-16 rounded-2xl shadow-lg shadow-red-900/40 flex items-center justify-center animate-pulse active:scale-95 transition-all"
+                >
+                  <Square size={24} fill="currentColor" className="text-white" />
                 </button>
               )}
-              <span className={`text-[10px] font-black uppercase tracking-[0.4em] ${isRecording ? 'text-red-500' : 'text-blue-500'}`}>
-                {isRecording ? 'Mapeando' : 'Patrulhar'}
+              <span className={`text-[8px] font-black uppercase tracking-[0.2em] ${isRecording ? 'text-red-500' : 'text-blue-500'}`}>
+                {isRecording ? 'Parar' : 'Correr'}
               </span>
             </div>
 
-            <div className="flex flex-col items-center space-y-2">
-              <button onClick={() => setIsSidebarOpen(true)} className="w-14 h-14 bg-gray-900/90 border border-white/10 rounded-[1.25rem] flex items-center justify-center text-gray-400 hover:text-white transition-all shadow-2xl active:scale-90">
-                <Target size={24}/>
+            <div className="flex flex-col items-center space-y-1">
+              <button onClick={() => setIsRankingOpen(true)} className="w-10 h-10 bg-gray-900/80 border border-white/10 rounded-xl flex items-center justify-center text-gray-400 hover:text-yellow-500 transition-all shadow-lg active:scale-90">
+                <Trophy size={18}/>
               </button>
-              <span className="text-[8px] font-black uppercase tracking-widest text-gray-600">Missões</span>
+              <span className="text-[7px] font-black uppercase tracking-widest text-gray-600">Ranking</span>
             </div>
           </div>
         </div>
       </main>
-
-      {/* Outras modais e rankings (inalterados, mas garantidos) */}
-      {selectedTerritory && (
-        <div className="absolute inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-md px-4 pb-12" onClick={() => setSelectedTerritory(null)}>
-          <div className="bg-gray-950 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl animate-in slide-in-from-bottom-10 flex flex-col max-h-[85vh]" onClick={e=>e.stopPropagation()}>
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-2xl font-black uppercase tracking-tight">{selectedTerritory.name}</h2>
-                <p className="text-blue-500 text-[10px] uppercase font-black tracking-widest mt-1">Domínio de: {selectedTerritory.ownerName}</p>
-              </div>
-              <button onClick={() => setSelectedTerritory(null)} className="p-2.5 bg-white/5 rounded-2xl"><X size={20}/></button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto space-y-8 custom-scrollbar pr-2">
-               <section className="bg-blue-600/10 border border-blue-500/20 p-5 rounded-3xl italic relative">
-                 <div className="absolute top-2 right-4 text-[7px] font-black text-blue-500 uppercase tracking-widest">IA Intelligence</div>
-                 <p className="text-[11px] text-blue-200 leading-relaxed">"{selectedTerritory.strategy || 'Protocolo de defesa padrão ativo.'}"</p>
-               </section>
-
-               <section>
-                 <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4 flex items-center space-x-3">
-                   <Clock size={12} className="text-yellow-500" />
-                   <span>Log de Atividades</span>
-                 </h3>
-                 <div className="space-y-3">
-                   {selectedTerritory.history.slice().reverse().map((h, i) => (
-                     <div key={i} className="flex items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/5">
-                        <div className="flex items-center space-x-4">
-                          <div className={`p-2 rounded-lg ${h.event === 'captured' ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
-                            {h.event === 'captured' ? <Swords size={16}/> : <Shield size={16}/>}
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-black uppercase leading-none">{h.event === 'captured' ? 'Conquista' : 'Defesa'}</p>
-                            <p className="text-[9px] text-gray-500 mt-1">{h.user}</p>
-                          </div>
-                        </div>
-                        <p className="text-[9px] font-mono text-gray-600">{new Date(h.date).toLocaleDateString()}</p>
-                     </div>
-                   ))}
-                 </div>
-               </section>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isRankingOpen && (
-        <div className="absolute inset-0 z-[110] bg-[#020617] animate-in slide-in-from-right duration-400 flex flex-col">
-          <div className="p-8 flex items-center justify-between border-b border-white/5 bg-black/50 backdrop-blur-md">
-             <h2 className="text-2xl font-black uppercase tracking-tighter italic">TOP <span className="text-blue-500">OPERADORES</span></h2>
-             <button onClick={() => setIsRankingOpen(false)} className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center shadow-xl"><X size={24}/></button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-8 space-y-4 custom-scrollbar">
-             {leaderboard.map((u, i) => (
-               <div key={u.id} className={`p-5 rounded-3xl border transition-all hover:translate-x-2 ${u.id === currentUser.id ? 'bg-blue-600/20 border-blue-500/50 ring-1 ring-blue-500/30' : 'bg-gray-900/40 border-white/5'} flex items-center justify-between`}>
-                 <div className="flex items-center space-x-5">
-                   <span className="text-sm font-mono opacity-30 font-black">#{i+1}</span>
-                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-black shadow-inner border border-white/10 text-lg" style={{backgroundColor: u.color}}>{u.name[0]}</div>
-                   <div>
-                     <p className="text-sm font-black uppercase leading-none">{u.name}</p>
-                     <p className="text-[9px] text-blue-400 font-black uppercase tracking-[0.2em] mt-1">{u.rankTitle}</p>
-                   </div>
-                 </div>
-                 <div className="text-right">
-                   <p className="text-base font-black text-white">{u.totalDistance.toFixed(1)}</p>
-                   <p className="text-[9px] text-gray-600 uppercase font-black">KM TOTAL</p>
-                 </div>
-               </div>
-             ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

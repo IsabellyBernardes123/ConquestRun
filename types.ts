@@ -11,19 +11,8 @@ export interface GroundingSource {
 
 export interface TerritoryHistory {
   date: number;
-  event: 'captured' | 'defended' | 'lost' | 'fortified';
+  event: 'captured' | 'defended' | 'lost';
   user: string;
-}
-
-export interface Mission {
-  id: string;
-  title: string;
-  description: string;
-  target: number;
-  current: number;
-  xpReward: number;
-  type: 'distance' | 'capture' | 'fortify';
-  completed: boolean;
 }
 
 export interface Territory {
@@ -31,14 +20,13 @@ export interface Territory {
   ownerId: string;
   ownerName: string;
   points: Coordinate[];
-  area: number; 
-  perimeter: number; 
+  area: number; // in square meters
+  perimeter: number; // in meters
   capturedAt: number;
   color: string;
   name: string;
   history: TerritoryHistory[];
   defenses: number;
-  fortificationLevel: number;
   strategy?: string;
   sources?: GroundingSource[];
 }
@@ -50,5 +38,14 @@ export interface User {
   level: number;
   xp: number;
   totalDistance: number;
-  rankTitle: string;
+}
+
+export interface Activity {
+  id: string;
+  userId: string;
+  path: Coordinate[];
+  distance: number;
+  duration: number;
+  timestamp: number;
+  isClosed: boolean;
 }
