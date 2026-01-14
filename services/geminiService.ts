@@ -2,7 +2,16 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Territory } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Função para obter a chave de forma segura
+const getSafeApiKey = () => {
+  try {
+    return (typeof process !== 'undefined' && process.env?.API_KEY) ? process.env.API_KEY : "";
+  } catch (e) {
+    return "";
+  }
+};
+
+const ai = new GoogleGenAI({ apiKey: getSafeApiKey() });
 
 export const getTerritoryAnalysis = async (territory: Territory, center: { lat: number, lng: number }) => {
   try {
@@ -31,8 +40,6 @@ export const getTerritoryAnalysis = async (territory: Territory, center: { lat: 
       uri: chunk.maps?.uri || ""
     })).filter((s: any) => s.uri) || [];
 
-    // The response text will contain the name and strategy
-    // Since we can't use responseSchema with googleMaps tool, we prompt for a specific format or parse the text
     const text = response.text || "";
     const nameMatch = text.match(/Nome(?:\s+do\s+território)?:\s*(.+)/i);
     const strategyMatch = text.match(/Estratégia:\s*(.+)/is);
